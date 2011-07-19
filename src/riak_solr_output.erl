@@ -10,7 +10,8 @@
 -include("riak_search.hrl").
 -include("riak_solr.hrl").
 
--export([xml_response/7, json_response/7]).
+-export([xml_response/7, xml_response_ids_only/6,
+         json_response/7, json_response_ids_only/6]).
 
 -import(riak_search_utils, [to_atom/1,
                             to_integer/1,
@@ -43,6 +44,28 @@ xml_response(Schema, SortBy, ElapsedTime, SQuery, NumFound, MaxScore, Docs0) ->
                              RenderedDocs ++ [xml_nl(), xml_indent(2)]},
             xml_nl()]}],
     xmerl:export_simple(lists:flatten(XML), xmerl_xml, [?XML_PROLOG]).
+
+xml_response_ids_only(Schema, ElapsedTime, SQuery, NumFound, MaxScore, DocIDs) ->
+    RenderedParams = render_xml_params(NumFound, Schema, SQuery),
+    RenderedDocIDs = lists:flatten([ [xml_nl(),xml_indent(4),{result,[{name,"DocID"}],[#xmlText{value=DocID}]}] || DocID <- DocIDs ]),
+    XML = [xml_nl(),
+           {response, [],
+            [xml_nl(),
+             xml_indent(2), {lst, [{name, "responseHeader"}],
+              [xml_nl(),
+               xml_indent(4), {int, [{name, "status"}], [#xmlText{value="0"}]},
+               xml_nl(),
+               xml_indent(4), {int, [{name, "QTime"}], [#xmlText{value=integer_to_list(ElapsedTime)}]}] ++
+                             RenderedParams ++ [xml_nl(), xml_indent(2)]},
+             xml_nl(),
+             xml_indent(2), {result, [{name, "response"},
+                                      {numFound, integer_to_list(NumFound)},
+                                      {start, integer_to_list(SQuery#squery.query_start)},
+                                      {maxScore, MaxScore}],
+                             RenderedDocIDs ++ [xml_nl(), xml_indent(2)]},
+            xml_nl()]}],
+    xmerl:export_simple(lists:flatten(XML), xmerl_xml, [?XML_PROLOG]).
+
 
 json_response(Schema, _SortBy, ElapsedTime, SQuery, NumFound, MaxScore, []) ->
     Response = [{<<"responseHeader">>,
@@ -87,6 +110,25 @@ json_response(Schema, SortBy, ElapsedTime, SQuery, NumFound, MaxScore, Docs0) ->
                             {<<"start">>, SQuery#squery.query_start},
                             {<<"maxScore">>, list_to_binary(MaxScore)},
                             {<<"docs">>, [riak_indexed_doc:to_mochijson2(F, Doc) || Doc <- Docs]}]}}],
+    mochijson2:encode({struct, Response}).
+
+json_response_ids_only(Schema, ElapsedTime, SQuery, NumFound, MaxScore, DocIDs) ->
+    Response = [{<<"responseHeader">>,
+                 {struct, [{<<"status">>, 0},
+                           {<<"QTime">>, ElapsedTime},
+                           {<<"params">>,
+                             {struct, [{<<"q">>, to_binary(SQuery#squery.q)},
+                                       {<<"q.op">>, to_binary(Schema:default_op())},
+                                       {<<"filter">>, to_binary(SQuery#squery.filter)},
+                                       {<<"df">>, to_binary(Schema:default_field())},
+                                       {<<"wt">>, <<"json">>},
+                                       {<<"version">>, <<"1.1">>},
+                                       {<<"rows">>, NumFound}]}}]}},
+                 {<<"response">>,
+                  {struct, [{<<"numFound">>, NumFound},
+                            {<<"start">>, SQuery#squery.query_start},
+                            {<<"maxScore">>, list_to_binary(MaxScore)},
+                            {<<"docIDs">>, DocIDs}]}}],
     mochijson2:encode({struct, Response}).
 
 %% Internal functions
